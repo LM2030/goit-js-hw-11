@@ -1,58 +1,103 @@
-import './css/styles.css';
-import debounce from 'lodash.debounce';
-import Notiflix from 'notiflix';
-import { fetchCountries } from './js/fetchCountries';
-import { countryInfo, countryList } from './js/template';
-
-const DEBOUNCE_DELAY = 300;
+import SimpleLightbox from 'simplelightbox';
+import 'simplelightbox/dist/simple-lightbox.min.css';
+import { API } from './js/api';
+import { cardTemplate } from './js/card-template';
+import { LoadMore } from './js/load-more';
+import { message } from './js/message';
+import { smoothScroll } from './js/scroll';
 
 const refs = {
-  searchBox: document.querySelector('#search-box'),
-  countryList: document.querySelector('.country-list'),
-  countryInfo: document.querySelector('.country-info'),
+  form: document.querySelector('#search-form'),
+  gallery: document.querySelector('.gallery'),
+  loadMore: document.querySelector('.load-more'),
+  themeSwitcher: document.querySelector('.theme-switch__toggle'),
 };
-refs.searchBox.addEventListener(
-  'input',
-  debounce(inputCountry, DEBOUNCE_DELAY)
-);
 
-function inputCountry() {
-  const name = refs.searchBox.value.trim();
-  if (name === '') {
-    return (refs.countryList.innerHTML = ''), (refs.countryInfo.innerHTML = '');
+const loadMore = new LoadMore(refs.loadMore);
+
+
+let api = null;
+let lightbox = new SimpleLightbox('.gallery a', {
+  captionsData: 'alt',
+  captionDelay: 250,
+});
+
+refs.form.addEventListener('submit', onFormSubmit);
+refs.loadMore.addEventListener('click', onLoadMoreClick);
+
+
+async function onFormSubmit(e) {
+  e.preventDefault();
+
+  const query = e.target.searchQuery.value;
+  if (api !== null && query === api.query && api.page === 1) return;
+  refs.gallery.innerHTML = '';
+  loadMore.removeMessage();
+  loadMore.loadingVisible();
+
+  api = new API(query);
+  api.page = 1;
+
+  const data = await createData();
+
+  if (!data) return;
+  render(data);
+  loadMore.loadingHidden();
+  lightbox.refresh();
+  loadMore.loadingHidden();
+  if (data.totalHits <= refs.gallery.children.length)
+    loadMore.stopLoad(message);
+}
+
+
+async function createData() {
+  try {
+    return await fetchPhotos();
+  } catch (error) {
+    console.log(error.message);
   }
+}
 
-  fetchCountries(name)
-    .then(countries => {
-      refs.countryList.innerHTML = '';
-      refs.countryInfo.innerHTML = '';
-      if (countries.length === 1) {
-        refs.countryList.insertAdjacentHTML(
-          'beforeend',
-          countryList(countries)
-        );
-        refs.countryInfo.insertAdjacentHTML(
-          'beforeend',
-          countryInfo(countries)
-        );
-      } else if (countries.length >= 10) {
-        manyOptions();
-      } else {
-        refs.countryList.insertAdjacentHTML(
-          'beforeend',
-          countryList(countries)
-        );
-      }
+async function fetchPhotos() {
+  return await api
+    .getPhotos()
+    .then(async resp => {
+      const data = await resp.data;
+      if (data.hits.length < 1) throw Error();
+      return data;
     })
-    .catch(wrongName);
+    .catch(error => {
+      message.failure();
+      loadMore.stopLoad();
+    });
 }
 
-function wrongName() {
-  Notiflix.Notify.failure('Oops, there is no country with that name');
+
+
+function render({ totalHits, hits }) {
+  const template = hits.map(cardTemplate).join('');
+  if (api.page === 1) {
+    message.success(totalHits);
+    refs.gallery.innerHTML = template;
+    return;
+  }
+  refs.gallery.insertAdjacentHTML('beforeend', template);
 }
 
-function manyOptions() {
-  Notiflix.Notify.info(
-    'Too many matches found. Please enter a more specific name.'
-  );
+
+
+async function onLoadMoreClick() {
+  if (!api) return;
+  loadMore.loadingVisible();
+  api.pageIncrement();
+
+  const data = await createData();
+
+  render(data);
+  smoothScroll(refs.gallery);
+  lightbox.refresh();
+  loadMore.loadingHidden();
+
+  if (data.totalHits <= refs.gallery.children.length)
+    loadMore.stopLoad(message);
 }
